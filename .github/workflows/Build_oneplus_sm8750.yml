@@ -26,12 +26,12 @@ on:
         type: boolean
 
       custom_kernel_suffix:
-        description: "✏️ カスタムカーネル名 (保持設定OFF時のみ有効)"
+        description: "✏️ カスタムカーネル名 (保持設定OFF時)"
         required: false
         default: ''
       
       custom_kernel_time:
-        description: "⏰ カスタムビルド時間 (保持設定OFF時のみ有効)"
+        description: "⏰ カスタムビルド時間 (保持設定OFF時)"
         required: false
         default: ''
 
@@ -42,7 +42,7 @@ on:
         type: boolean
 
       enable_susfs:
-        description: "🛡️ SusFS (隠蔽機能) ※Splashループ時は必ずOFF"
+        description: "🛡️ SusFS (隠蔽機能) ※Splashループ時はOFF"
         required: false
         default: false
         type: boolean
@@ -66,7 +66,7 @@ on:
         type: boolean
 
       enable_kernel_rescue:
-        description: "🚑 救出モード (Inputドライバ強制) ※MTK機はフリーズ原因になるためOFF"
+        description: "🚑 救出モード (Inputドライバ強制) ※MTK機はフリーズ原因のためOFF"
         required: false
         default: false
         type: boolean
@@ -219,7 +219,7 @@ jobs:
           rm -rf build-tools.zip &
           wait
           echo "初期化完了！"
-          echo "ABI保護の解除 & dirtyサフィックスの削除..."
+          echo "ABI保护の解除 & dirtyサフィックスの削除..."
           rm common/android/abi_gki_protected_exports_* || true
           for f in common/scripts/setlocalversion; do
             sed -i 's/ -dirty//g' "$f"
@@ -283,9 +283,12 @@ jobs:
       - name: ⚙️ Set SuKiSU Ultra (SuKiSU Ultraセットアップ)
         if: ${{ env.ENABLE_KSU == 'true' }}
         run: |
-          cd kernel_workspace
+          cd kernel_workspace/common
           echo "SukiSU Ultraをセットアップ中..."
+          # ここが修正ポイント：commonディレクトリ内で実行
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
+          
+          # フォルダ移動
           cd ./KernelSU
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "Commit Hash: $GIT_COMMIT_HASH"
@@ -298,12 +301,14 @@ jobs:
           [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
           echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
           
-          # バージョン定義の書き換え
+          # バージョン定義の書き換え（../kernel/Kbuild は common/kernel/Kbuild を指す）
           VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'-TG@qdykernel\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'-TG@qdykernel'
-          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
-          awk -v def="$VERSION_DEFINITIONS" '/REPO_OWNER :=/ {print; print def; inserted=1; next} 1 END {if (!inserted) print def}' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
+          
+          # Kbuildの場所を正しく指定（現在のKernelSUフォルダから見て1つ上のkernelフォルダ）
+          sed -i '/define get_ksu_version_full/,/endef/d' ../kernel/Kbuild
+          sed -i '/KSU_VERSION_API :=/d' ../kernel/Kbuild
+          sed -i '/KSU_VERSION_FULL :=/d' ../kernel/Kbuild
+          awk -v def="$VERSION_DEFINITIONS" '/REPO_OWNER :=/ {print; print def; inserted=1; next} 1 END {if (!inserted) print def}' ../kernel/Kbuild > ../kernel/Kbuild.tmp && mv ../kernel/Kbuild.tmp ../kernel/Kbuild
 
           KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
