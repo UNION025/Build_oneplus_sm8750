@@ -42,27 +42,27 @@ on:
         type: boolean
 
       enable_susfs:
-        description: "🛡️ SusFS (隠蔽・モジュール機能拡張) を有効化 ※ブートループ時はOFF推奨"
+        description: "🛡️ SusFS (隠蔽機能) を有効化 ※ブートループ時は【OFF】にしてください"
         required: false
-        default: true
+        default: false 
         type: boolean
 
       enable_scx:
         description: "Fengchi (Sched Patch) を追加"
         required: false
-        default: true
+        default: false
         type: boolean
 
       enable_bbg:
         description: "BBG (Baseband-guard) を有効化"
         required: false
-        default: true
+        default: false
         type: boolean
         
       enable_hymo:
         description: "Hymo実装を追加"
         required: false
-        default: true
+        default: false
         type: boolean
 
       enable_kernel_rescue:
@@ -305,8 +305,7 @@ jobs:
           # バージョン定義の書き換え
           VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'-TG@qdykernel\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'-TG@qdykernel'
           
-          # 修正: REPO_OWNER変数はKernelSU内部のKbuildで定義されているため、
-          # 現在のディレクトリ(KernelSU)内の kernel/Kbuild を編集する
+          # 修正: Kbuildのパス修正 ( ../kernel/Kbuild は間違いです。kernel/Kbuild が正解です )
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
           sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
