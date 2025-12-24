@@ -283,10 +283,9 @@ jobs:
       - name: ⚙️ Set SuKiSU Ultra (SuKiSU Ultraセットアップ)
         if: ${{ env.ENABLE_KSU == 'true' }}
         run: |
-          # 修正: カーネルソースルート(common)へ移動
+          # commonフォルダに移動して実行
           cd kernel_workspace/common
           echo "SukiSU Ultraをセットアップ中..."
-          # setup.shはbuiltinモードでKernelSUをクローンしてドライバに登録する
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
           # KernelSUフォルダへ移動
@@ -305,7 +304,7 @@ jobs:
           # バージョン定義の書き換え
           VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'-TG@qdykernel\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'-TG@qdykernel'
           
-          # 修正: Kbuildのパス修正 ( ../kernel/Kbuild は間違いです。kernel/Kbuild が正解です )
+          # パス修正: 現在のKernelSUフォルダ内のkernel/Kbuildを操作
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
           sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
@@ -416,11 +415,13 @@ jobs:
           
       - name: 🔧 Apply Sched Patch (Fengchi適用)
         run: |
+          # 修正: 必ずcommonディレクトリに移動してから処理を開始する
+          cd kernel_workspace/common
+          
           if [ "${{ env.ENABLE_SCX }}" = "true" ]; then
             if [ "$SCHED_FILE" = "none" ]; then
               echo "Fengchiスキップ（内蔵済み）"
             else
-              cd kernel_workspace/common
               if [ "${DEVICES_NAME}" = "oneplus_ace5_ultra" ] || [ "${DEVICES_NAME}" = "realme_GT7" ]; then
                 git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
               else
