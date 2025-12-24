@@ -326,7 +326,6 @@ jobs:
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
           if [ "${{ env.ENABLE_HYMO }}" = "true" ]; then
             echo "HymoFSパッチ適用"
-            # 修正箇所: URLを android15_6.6 ブランチのものに変更
             wget https://raw.githubusercontent.com/Anatdx/HymoFS/refs/heads/android15_6.6/patch/hymofs_with_susfs.patch
             patch -p1 -F 3 < hymofs_with_susfs.patch
             echo "CONFIG_HYMOFS=y" >> ./arch/arm64/configs/gki_defconfig
@@ -411,11 +410,11 @@ jobs:
           
       - name: 🔧 Apply Sched Patch (Fengchi適用)
         run: |
+          cd kernel_workspace/common
           if [ "${{ env.ENABLE_SCX }}" = "true" ]; then
             if [ "$SCHED_FILE" = "none" ]; then
               echo "Fengchiスキップ（内蔵済み）"
             else
-              cd kernel_workspace/common
               if [ "${DEVICES_NAME}" = "oneplus_ace5_ultra" ] || [ "${DEVICES_NAME}" = "realme_GT7" ]; then
                 git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
               else
