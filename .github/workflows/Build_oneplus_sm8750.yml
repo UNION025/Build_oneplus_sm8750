@@ -3,21 +3,21 @@ on:
   workflow_dispatch:
     inputs:
       DEVICES_NAME:
-        description: "📝 コンパイルする機種を選択："
+        description: "📝 機種を選択（GT7無印 / MTK）"
         required: true
         type: choice
         options:
+          - 'realme_GT7'            # Dimensity 9400 (MTK)
+          - 'realme_GT7pro'         # Snapdragon 8 Elite
           - 'oneplus_13'
           - 'oneplus_ace5_pro'
           - 'oneplus_ace_6'
           - 'oneplus_13t'
           - 'oneplus_pad_2_pro'
           - 'oneplus_ace5_ultra'
-          - 'realme_GT7'
-          - 'realme_GT7pro'
           - 'realme_GT7pro_Speed'
           - 'realme_GT8'
-        default: 'oneplus_ace5_pro'
+        default: 'realme_GT7'
 
       keep_original_settings:
         description: "📝 元のカーネル名とビルド時間を保持する"
@@ -36,39 +36,39 @@ on:
         default: ''
 
       enable_ksu:
-        description: "⭕ KernelSU (Root権限) を有効化（OFFで完全純正化）"
+        description: "⭕ KernelSU (Root権限) を有効化"
         required: false
         default: true
         type: boolean
 
       enable_susfs:
-        description: "🛡️ SusFS (隠蔽・モジュール機能拡張) を有効化 ※ブートループ時はOFF推奨"
+        description: "🛡️ SusFS (隠蔽機能) ※Splashループ時は必ずOFF"
         required: false
-        default: true
+        default: false
         type: boolean
 
       enable_scx:
-        description: "Fengchi (Sched Patch) を追加"
+        description: "🚀 Fengchi (最適化パッチ) ※起動しない場合はOFF"
         required: false
-        default: true
+        default: false
         type: boolean
 
       enable_bbg:
-        description: "BBG (Baseband-guard) を有効化"
+        description: "📡 BBG (Baseband-guard)"
         required: false
-        default: true
+        default: false
         type: boolean
         
       enable_hymo:
-        description: "Hymo実装を追加"
+        description: "🧩 Hymo実装"
         required: false
-        default: true
+        default: false
         type: boolean
 
       enable_kernel_rescue:
-        description: "🚑 救出モード (Inputドライバ強制組み込み)"
+        description: "🚑 救出モード (Inputドライバ強制) ※MTK機はフリーズ原因になるためOFF"
         required: false
-        default: true
+        default: false
         type: boolean
 
       enable_network:
