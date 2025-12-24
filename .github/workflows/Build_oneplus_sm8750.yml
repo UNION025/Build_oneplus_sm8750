@@ -3,21 +3,21 @@ on:
   workflow_dispatch:
     inputs:
       DEVICES_NAME:
-        description: "📝 機種を選択（GT7無印 / MTK）"
+        description: "📝 コンパイルする機種を選択："
         required: true
         type: choice
         options:
-          - 'realme_GT7'            # Dimensity 9400 (MTK)
-          - 'realme_GT7pro'         # Snapdragon 8 Elite
           - 'oneplus_13'
           - 'oneplus_ace5_pro'
           - 'oneplus_ace_6'
           - 'oneplus_13t'
           - 'oneplus_pad_2_pro'
           - 'oneplus_ace5_ultra'
+          - 'realme_GT7'
+          - 'realme_GT7pro'
           - 'realme_GT7pro_Speed'
           - 'realme_GT8'
-        default: 'realme_GT7'
+        default: 'oneplus_ace5_pro'
 
       keep_original_settings:
         description: "📝 元のカーネル名とビルド時間を保持する"
@@ -26,49 +26,49 @@ on:
         type: boolean
 
       custom_kernel_suffix:
-        description: "✏️ カスタムカーネル名 (保持設定OFF時)"
+        description: "✏️ カスタムカーネル名 (保持設定OFF時のみ有効)"
         required: false
         default: ''
       
       custom_kernel_time:
-        description: "⏰ カスタムビルド時間 (保持設定OFF時)"
+        description: "⏰ カスタムビルド時間 (保持設定OFF時のみ有効)"
         required: false
         default: ''
 
       enable_ksu:
-        description: "⭕ KernelSU (Root権限) を有効化"
+        description: "⭕ KernelSU (Root権限) を有効化（OFFで完全純正化）"
         required: false
         default: true
         type: boolean
 
       enable_susfs:
-        description: "🛡️ SusFS (隠蔽機能) ※Splashループ時はOFF"
+        description: "🛡️ SusFS (隠蔽・モジュール機能拡張) を有効化 ※ブートループ時はOFF推奨"
         required: false
-        default: false
+        default: true
         type: boolean
 
       enable_scx:
-        description: "🚀 Fengchi (最適化パッチ) ※起動しない場合はOFF"
+        description: "Fengchi (Sched Patch) を追加"
         required: false
-        default: false
+        default: true
         type: boolean
 
       enable_bbg:
-        description: "📡 BBG (Baseband-guard)"
+        description: "BBG (Baseband-guard) を有効化"
         required: false
-        default: false
+        default: true
         type: boolean
         
       enable_hymo:
-        description: "🧩 Hymo実装"
+        description: "Hymo実装を追加"
         required: false
-        default: false
+        default: true
         type: boolean
 
       enable_kernel_rescue:
-        description: "🚑 救出モード (Inputドライバ強制) ※MTK機はフリーズ原因のためOFF"
+        description: "🚑 救出モード (Inputドライバ強制組み込み)"
         required: false
-        default: false
+        default: true
         type: boolean
 
       enable_network:
@@ -219,7 +219,7 @@ jobs:
           rm -rf build-tools.zip &
           wait
           echo "初期化完了！"
-          echo "ABI保护の解除 & dirtyサフィックスの削除..."
+          echo "ABI保護の解除 & dirtyサフィックスの削除..."
           rm common/android/abi_gki_protected_exports_* || true
           for f in common/scripts/setlocalversion; do
             sed -i 's/ -dirty//g' "$f"
@@ -283,12 +283,13 @@ jobs:
       - name: ⚙️ Set SuKiSU Ultra (SuKiSU Ultraセットアップ)
         if: ${{ env.ENABLE_KSU == 'true' }}
         run: |
+          # 修正: カーネルソースルート(common)へ移動
           cd kernel_workspace/common
           echo "SukiSU Ultraをセットアップ中..."
-          # ここが修正ポイント：commonディレクトリ内で実行
+          # setup.shはbuiltinモードでKernelSUをクローンしてドライバに登録する
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          # フォルダ移動
+          # KernelSUフォルダへ移動
           cd ./KernelSU
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "Commit Hash: $GIT_COMMIT_HASH"
@@ -301,14 +302,15 @@ jobs:
           [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
           echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
           
-          # バージョン定義の書き換え（../kernel/Kbuild は common/kernel/Kbuild を指す）
+          # バージョン定義の書き換え
           VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'-TG@qdykernel\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'-TG@qdykernel'
           
-          # Kbuildの場所を正しく指定（現在のKernelSUフォルダから見て1つ上のkernelフォルダ）
-          sed -i '/define get_ksu_version_full/,/endef/d' ../kernel/Kbuild
-          sed -i '/KSU_VERSION_API :=/d' ../kernel/Kbuild
-          sed -i '/KSU_VERSION_FULL :=/d' ../kernel/Kbuild
-          awk -v def="$VERSION_DEFINITIONS" '/REPO_OWNER :=/ {print; print def; inserted=1; next} 1 END {if (!inserted) print def}' ../kernel/Kbuild > ../kernel/Kbuild.tmp && mv ../kernel/Kbuild.tmp ../kernel/Kbuild
+          # 修正: REPO_OWNER変数はKernelSU内部のKbuildで定義されているため、
+          # 現在のディレクトリ(KernelSU)内の kernel/Kbuild を編集する
+          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
+          sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
+          sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
+          awk -v def="$VERSION_DEFINITIONS" '/REPO_OWNER :=/ {print; print def; inserted=1; next} 1 END {if (!inserted) print def}' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
 
           KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
@@ -415,11 +417,11 @@ jobs:
           
       - name: 🔧 Apply Sched Patch (Fengchi適用)
         run: |
-          cd kernel_workspace/common
           if [ "${{ env.ENABLE_SCX }}" = "true" ]; then
             if [ "$SCHED_FILE" = "none" ]; then
               echo "Fengchiスキップ（内蔵済み）"
             else
+              cd kernel_workspace/common
               if [ "${DEVICES_NAME}" = "oneplus_ace5_ultra" ] || [ "${DEVICES_NAME}" = "realme_GT7" ]; then
                 git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
               else
@@ -457,8 +459,8 @@ jobs:
           
           cd kernel_workspace/common
           # フェイク時刻・統計ライブラリのセットアップ (ビルド再現性向上)
-          wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/refs/heads/main/lib/libfakestat.so
-          wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/refs/heads/main/lib/libfaketimeMT.so
+          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfakestat.so
+          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfaketimeMT.so
           chmod 777 ./*.so
           export FAKESTAT="2025-05-25 12:00:00"
           export FAKETIME="@2025-05-25 13:00:00"
