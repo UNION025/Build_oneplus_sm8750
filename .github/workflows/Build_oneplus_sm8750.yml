@@ -1,4 +1,4 @@
-name: Build_oneplus_sm8750_Ultimate
+name: Build_oneplus_sm8750_Ultimate_Fix
 on:
   workflow_dispatch:
     inputs:
@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 0
       
-      # 1. 環境変数の設定 (Sched Patch用の設定を追加)
+      # 1. 環境変数の設定
       - name: ⚙️ Set REPO_MANIFEST
         run: |
           case "${{ env.DEVICES_NAME }}" in
@@ -151,38 +151,39 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           ccache -M 3G
 
-      # 4. SuKiSU 導入 & バージョン表記カスタム (@unidonbri)
+      # 4. SuKiSU 導入 & バージョン表記カスタム (@unidonbri) - 【修正済み】
       - name: ⚙️ Set SuKiSU & Custom Version
         run: |
           cd kernel_workspace
           # SuKiSUのセットアップ
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          # 【重要】バージョン表記を @unidonbri にカスタマイズ
+          # 【重要】バージョン表記を @unidonbri にカスタマイズ (安全な方法)
           cd KernelSU
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "Current Commit: $GIT_COMMIT_HASH"
-          
-          # KSUのバージョンAPIを取得
-          KSU_API_VERSION=$(grep "KSU_VERSION_API :=" ../common/kernel/Kbuild | head -n1 | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-          [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
-          
-          # カスタムバージョン定義の作成 (@unidonbri)
-          # ここで既存の定義を削除して、自分たちの好きな名前に書き換えます
-          VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'-@unidonbri\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'-@unidonbri'
-          
           cd ../common
-          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
           
-          # Kbuildの末尾に追加
-          echo "$VERSION_DEFINITIONS" >> kernel/Kbuild
+          # カスタムバージョン文字列
+          CUSTOM_VERSION="v3.1.7-${GIT_COMMIT_HASH}-@unidonbri"
           
-          # 確認
-          echo "=== Modified kernel/Kbuild ==="
-          tail -n 10 kernel/Kbuild
-          echo "=============================="
+          # 書き込み先ファイルの特定 (kernel/Kbuildがない場合のフォールバック)
+          if [ -f "kernel/Kbuild" ]; then
+             echo "Found kernel/Kbuild, patching..."
+             # 既存の定義があれば削除
+             sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild || true
+             sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild || true
+             sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild || true
+             
+             # 新しい定義を追加
+             printf "\nKSU_VERSION_API := 3.1.7\nKSU_VERSION_FULL := %s\n" "$CUSTOM_VERSION" >> kernel/Kbuild
+          else
+             echo "kernel/Kbuild not found. Injecting into drivers/Makefile..."
+             # drivers/Makefile に強制的にCフラグとして追加
+             echo "ccflags-y += -DKSU_VERSION_FULL=\\\"$CUSTOM_VERSION\\\"" >> drivers/Makefile
+          fi
+          
+          echo "Version set to: $CUSTOM_VERSION"
 
       # 5. SUSFS + Hymo (隠蔽 & システム最適化)
       - name: 🔧 Set up SUSFS & Hymo
@@ -229,7 +230,7 @@ jobs:
              fi
           fi
 
-      # 7. defconfigの設定 (機能全部入り: KSU, SUSFS, Hymo, Sched)
+      # 7. defconfigの設定
       - name: 🔧 Configure defconfig
         run: |
           cd kernel_workspace
@@ -258,7 +259,7 @@ jobs:
           # HymoFS (システム最適化)
           echo "CONFIG_HYMOFS=y" >> $DEFCONFIG
           
-          # ゲームパフォーマンス (BBR/FQ_CODELなど)
+          # ゲームパフォーマンス
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
           echo "CONFIG_NET_SCH_FQ_CODEL=y" >> $DEFCONFIG
           echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
@@ -268,7 +269,7 @@ jobs:
           sudo sed -i "s/-4k/$ESCAPED_SUFFIX/g" $DEFCONFIG
           sudo sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      # 8. HMBIRDパッチ (起動対策)
+      # 8. HMBIRDパッチ
       - name: 🔧 Apply HMBIRD Patch
         run: |
           cd kernel_workspace/common
