@@ -197,6 +197,7 @@ jobs:
           patch -p1 -F 3 < hmbird_patch.patch || echo "Patch failed or already applied."
 
       # 7. カーネルのビルド
+# 7. カーネルのビルド (安定版: 時刻偽装を削除)
       - name: 🔨 Build Kernel
         run: |
           WORKDIR="$(pwd)"
@@ -211,20 +212,18 @@ jobs:
           
           cd kernel_workspace/common
           
-          # フェイクタイムの設定 (ビルドの再現性を確保するため提供されたライブラリを使用)
-          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfakestat.so
-          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfaketimeMT.so
-          chmod 777 ./*.so
-          export LD_PRELOAD="$(pwd)/libfakestat.so $(pwd)/libfaketimeMT.so"
-          export FAKESTAT="2025-05-25 12:00:00"
-          export FAKETIME="@2025-05-25 13:00:00"
-          export KBUILD_BUILD_TIMESTAMP="${KERNEL_TIME}"
+          # 【修正点】libfaketime (LD_PRELOAD) 関連の行を全て削除しました
+          # これによりフリーズを回避します
           
           # ビルド実行
           echo "Starting Build..."
+          # KBUILD_BUILD_TIMESTAMP は標準機能で設定
+          export KBUILD_BUILD_TIMESTAMP="${KERNEL_TIME}"
+          
+          # エラー無視フラグ(-Wno-error)を追加して停止を防ぐ
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
-
+          
       # 8. AnyKernel3の作成 (Flash可能なZipにする)
       - name: 📦 Make AnyKernel3
         run: |
