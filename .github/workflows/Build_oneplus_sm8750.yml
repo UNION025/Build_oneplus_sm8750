@@ -1,4 +1,4 @@
-name: Build_oneplus_sm8750_RootOnly
+name: Build_oneplus_sm8750_SuKiSU_Full
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +17,7 @@ on:
           - 'realme_GT7pro'
           - 'realme_GT7pro_Speed'
           - 'realme_GT8'
-        default: 'realme_GT7'
+        default: 'oneplus_ace5_pro'
 
       keep_original_settings:
         description: "📝 純正のカーネル名と時間を保持する (推奨: true)"
@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 0
       
-      # 1. 環境変数の設定 (純正設定に基づく)
+      # 1. 環境変数の設定
       - name: ⚙️ Set REPO_MANIFEST
         run: |
           case "${{ env.DEVICES_NAME }}" in
@@ -63,12 +63,10 @@ jobs:
               echo "REPO_MANIFEST=mt6991_v_15.0.2_ace5_ultra" >> $GITHUB_ENV
               ;;
             *)
-              # その他の機種用（簡易設定）
               echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_13" >> $GITHUB_ENV
               ;;
           esac
           
-          # カーネル名/時間のデフォルト値設定 (元のロジックを維持)
           if [ "${{ env.KEEP_ORIGINAL_SETTINGS }}" = "true" ]; then
             case "${{ env.DEVICES_NAME }}" in
             oneplus_pad_2_pro)
@@ -89,26 +87,24 @@ jobs:
               ;;
           esac
           else
-            echo "DEFAULT_SUFFIX=-Rooted" >> $GITHUB_ENV
+            echo "DEFAULT_SUFFIX=-SuKiSU" >> $GITHUB_ENV
             echo "KERNEL_TIME=$(date)" >> $GITHUB_ENV
           fi
 
-      # 2. 依存関係のインストールとソースコードの取得
+      # 2. 依存関係とソース取得
       - name: 🛠 Install dependencies and Initialize repo
         run: |
           rm -rf kernel_workspace
           mkdir kernel_workspace
           cd kernel_workspace
-          
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full
           
-          echo "正在克隆源码仓库..."
+          echo "Cloning Source..."
           if [ "${DEVICES_NAME}" = "oneplus_ace5_ultra" ] || [ "${DEVICES_NAME}" = "realme_GT7" ]; then
             aria2c -s16 -x16 -k1M https://github.com/OnePlusOSS/android_kernel_oneplus_mt6991/archive/refs/heads/oneplus/${REPO_MANIFEST}.zip -o common.zip
             unzip -q common.zip && mv "android_kernel_oneplus_mt6991-oneplus-${REPO_MANIFEST}" common
           elif [[ "${DEVICES_NAME}" == *"realme"* ]]; then
-             # Realme GT7pro等用
              aria2c -s16 -x16 -k1M https://github.com/realme-kernel-opensource/realme_GT7pro-AndroidB-common-source/archive/refs/heads/master.zip -o common.zip
              unzip -q common.zip && mv "realme_GT7pro-AndroidB-common-source-master" common
           else
@@ -117,24 +113,19 @@ jobs:
           fi
           rm -rf common.zip 
           
-          echo "正在克隆llvm-clang18工具链..."
+          echo "Cloning Tools..."
           mkdir -p clang18
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip -o clang.zip
           unzip -q clang.zip -d clang18
           rm -rf clang.zip
-          
-          echo "正在克隆构建工具..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o build-tools.zip
           unzip -q build-tools.zip
           rm -rf build-tools.zip
           
-          # ABI保護の解除 (ビルドエラー回避)
           rm common/android/abi_gki_protected_exports_* || true
-          for f in common/scripts/setlocalversion; do
-            sed -i 's/ -dirty//g' "$f"
-          done
+          for f in common/scripts/setlocalversion; do sed -i 's/ -dirty//g' "$f"; done
 
-      # 3. ccacheの設定 (ビルド時間短縮)
+      # 3. ccache設定
       - name: 📥 Setup ccache
         uses: actions/cache@v4
         id: ccache-restore
@@ -147,95 +138,111 @@ jobs:
         run: |
           export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
           mkdir -p "$CCACHE_DIR"
-          export CCACHE_max_size="3G"
           ccache -M 3G
 
-      # 4. KernelSU (SuKiSU) の導入 [Root化の核心]
+      # 4. KernelSU (SuKiSU) の導入
       - name: ⚙️ Set SuKiSU (KernelSU)
         run: |
           cd kernel_workspace
-          echo "正在配置 KernelSU (SuKiSU)..."
-          # Android 15対応のSuKiSUセットアップスクリプトを実行
+          # SuKiSUのセットアップ
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          # バージョン情報の埋め込み (ビルドスクリプトから引用)
+          # バージョン定義の修正
           cd KernelSU
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          KSU_VERSION=114514
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSUVER=114514" >> $GITHUB_ENV
           cd ../common
-          
-      # 5. Root機能の有効化 (gki_defconfig) [SHA関連設定は削除]
-      - name: 🔧 Enable KSU in defconfig
+
+      # 5. SUSFS (SuKiSU Filesystem) の導入 【ここを復活・追加】
+      - name: 🔧 Set up SUSFS (For SuKiSU App Support)
         run: |
           cd kernel_workspace
-          # 必須: KernelSUを有効化
-          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "Adding SUSFS patches..."
           
-          # 不要なモジュール署名強制などを無効化（念のため）
-          # echo "CONFIG_MODULE_SIG=n" >> ./common/arch/arm64/configs/gki_defconfig
+          # SUSFSパッチの取得
+          git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          
+          # パッチとファイルのコピー
+          cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
+          cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          
+          # 隠蔽用パッチの適用
+          cp ./SukiSU_patch/69_hide_stuff.patch ./common/
+          
+          # パッチ適用実行
+          cd ./common
+          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS patch failed or already applied"
+          # 69_hide_stuffはコンフリクトする可能性があるため、失敗しても続行させる
+          patch -p1 < 69_hide_stuff.patch || echo "Hide stuff patch skipped"
 
-          # カーネル名の偽装設定 (提供されたロジックを流用)
-          ESCAPED_SUFFIX=$(printf '%s\n' "$DEFAULT_SUFFIX" | sed 's:[\/&]:\\&:g')
-          sudo sed -i "s/-4k/$ESCAPED_SUFFIX/g" ./common/arch/arm64/configs/gki_defconfig
+      # 6. defconfigの設定 (Root + SUSFS)
+      - name: 🔧 Enable KSU & SUSFS in defconfig
+        run: |
+          cd kernel_workspace
+          DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
           
-          # check_defconfigの無効化
+          # KernelSUの有効化
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          
+          # SUSFSの有効化 (これがアプリ動作に必須の可能性大)
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
+          
+          # カーネル名の偽装
+          ESCAPED_SUFFIX=$(printf '%s\n' "$DEFAULT_SUFFIX" | sed 's:[\/&]:\\&:g')
+          sudo sed -i "s/-4k/$ESCAPED_SUFFIX/g" $DEFCONFIG
           sudo sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      # 6. HMBIRDパッチの適用 (重要: 起動成功率向上)
-      - name: 🔧 Apply HMBIRD Patch (OGKI->GKI)
+      # 7. HMBIRDパッチ (起動対策)
+      - name: 🔧 Apply HMBIRD Patch
         run: |
           cd kernel_workspace/common
-          
-          # hmbird_patch.o をビルド対象に追加
           sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
-          
-          # リポジトリ内のパッチファイルを適用
           cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/hmbird_patch.patch" ./hmbird_patch.patch
-          
-          echo "Applying HMBIRD Patch..."
-          patch -p1 -F 3 < hmbird_patch.patch || echo "Patch failed or already applied."
+          patch -p1 -F 3 < hmbird_patch.patch || echo "HMBIRD Patch already applied."
 
-      # 7. カーネルのビルド
-# 7. カーネルのビルド (安定版: 時刻偽装を削除)
+      # 8. ビルド (安定版: faketimeなし)
       - name: 🔨 Build Kernel
         run: |
           WORKDIR="$(pwd)"
           export PATH="/usr/lib/ccache:$PATH"
           export PATH="$WORKDIR/kernel_workspace/clang18/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
-          
-          # ccache設定
           export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
           export CCACHE_EXEC=$(which ccache)
           export USE_CCACHE=1
+          export KBUILD_BUILD_TIMESTAMP="${KERNEL_TIME}"
           
           cd kernel_workspace/common
           
-          # 【修正点】libfaketime (LD_PRELOAD) 関連の行を全て削除しました
-          # これによりフリーズを回避します
-          
-          # ビルド実行
           echo "Starting Build..."
-          # KBUILD_BUILD_TIMESTAMP は標準機能で設定
-          export KBUILD_BUILD_TIMESTAMP="${KERNEL_TIME}"
-          
-          # エラー無視フラグ(-Wno-error)を追加して停止を防ぐ
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
-          
-      # 8. AnyKernel3の作成 (Flash可能なZipにする)
+
       - name: 📦 Make AnyKernel3
         run: |
-          # 提供されたバイナリツールを使用
           cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/main.bin" ./
           chmod +x main.bin
           ./main.bin "make_anykernel3"
           rm -rf ./main.bin
 
-      # 9. アップロード
       - name: 📤 Upload Result
         uses: actions/upload-artifact@v4
         with:
-         name: Kernel_Rooted_${{ env.DEVICES_NAME }}
+         name: Kernel_SuKiSU_Full_${{ env.DEVICES_NAME }}
          path: ./AnyKernel3/*
