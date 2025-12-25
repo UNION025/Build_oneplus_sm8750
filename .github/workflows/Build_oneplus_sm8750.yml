@@ -151,29 +151,26 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           ccache -M 3G
 
-      # 4. SuKiSU 導入 & バージョン表記カスタム (修正版: 追記モード)
+      # 4. SuKiSU 導入 & バージョン表記カスタム (Hymoなし、バージョン偽装あり)
       - name: ⚙️ Set SuKiSU & Custom Version
         run: |
           cd kernel_workspace
           # SuKiSUのセットアップ
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          # 【重要】バージョン定義の修正 (114514 & @unidonbri)
+          # バージョン定義の修正 (114514 & @unidonbri)
           cd KernelSU
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "Current Commit: $GIT_COMMIT_HASH"
           
           CUSTOM_VERSION="v3.1.8-${GIT_COMMIT_HASH}-@unidonbri"
           
-          # KernelSU/kernel/Kbuild にバージョン情報を【追記】する (上書きしない！)
+          # KernelSU/kernel/Kbuild にバージョン情報を追記
           if [ -f "kernel/Kbuild" ]; then
              echo "Appending custom version to KernelSU/kernel/Kbuild..."
-             
-             # 重複を避けるため既存のバージョン定義があれば削除
              sed -i '/KSU_VERSION_API/d' kernel/Kbuild
              sed -i '/KSU_VERSION_FULL/d' kernel/Kbuild
              
-             # 末尾に追記 (>> を使用)
              echo "ccflags-y += -DKSU_VERSION_API=114514" >> kernel/Kbuild
              echo "ccflags-y += -DKSU_VERSION_FULL=\\\"$CUSTOM_VERSION\\\"" >> kernel/Kbuild
              
@@ -184,8 +181,8 @@ jobs:
              exit 1
           fi
 
-      # 5. SUSFS + Hymo (隠蔽 & システム最適化)
-      - name: 🔧 Set up SUSFS & Hymo
+      # 5. SUSFS導入 (Hymoは削除)
+      - name: 🔧 Set up SUSFS
         run: |
           cd kernel_workspace
           echo "Adding SUSFS patches..."
@@ -201,16 +198,7 @@ jobs:
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS patch failed"
           patch -p1 < 69_hide_stuff.patch || echo "Hide stuff patch skipped"
           
-          # Hymo (高性能混合挂载元模块)
-          echo "Adding HymoFS patches..."
-          wget https://raw.githubusercontent.com/Anatdx/HymoFS/android15_6.6/patch/hymofs_with_susfs.patch
-          
-          if [ -f "hymofs_with_susfs.patch" ]; then
-             patch -p1 -F 3 < hymofs_with_susfs.patch || echo "Hymo patch failed"
-          else
-             echo "Error: Failed to download HymoFS patch. Skipping..."
-             exit 1
-          fi
+          # Hymoのインストール処理はここで完全に削除しました
 
       # 6. Sched Patch (ゲームパフォーマンス - 完美風馳)
       - name: 🔧 Apply Sched Patch (Fengchi)
@@ -261,8 +249,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
           
-          # HymoFS (システム最適化)
-          echo "CONFIG_HYMOFS=y" >> $DEFCONFIG
+          # HymoFS の設定も削除しました
           
           # ゲームパフォーマンス
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
@@ -310,5 +297,5 @@ jobs:
       - name: 📤 Upload Result
         uses: actions/upload-artifact@v4
         with:
-         name: Kernel_Perfect_${{ env.DEVICES_NAME }}
+         name: Kernel_NoHymo_${{ env.DEVICES_NAME }}
          path: ./AnyKernel3/*
