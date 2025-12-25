@@ -17,7 +17,7 @@ on:
           - 'realme_GT7pro'
           - 'realme_GT7pro_Speed'
           - 'realme_GT8'
-        default: 'oneplus_ace5_pro'
+        default: 'realme_GT7'
 
       keep_original_settings:
         description: "📝 元のカーネル名とビルド時間を保持する"
@@ -40,6 +40,11 @@ on:
         required: false
         default: true
         type: boolean
+
+      ksu_manager_hash:
+        description: "🔑 KernelSU Managerの署名ハッシュ (SHA-256)"
+        required: false
+        default: '947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef'
 
       enable_susfs:
         description: "🛡️ SusFS (隠蔽機能) を有効化 ※ブートループ時は【OFF】にしてください"
@@ -441,6 +446,28 @@ jobs:
               sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
                cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/hmbird_patch.patch" ./hmbird_patch.patch
               patch -p1 -F 3 < hmbird_patch.patch
+          fi
+
+      - name: 🗝️ Patch KernelSU Signature
+        if: ${{ env.ENABLE_KSU == 'true' }}
+        run: |
+          echo "Applying KernelSU Manager Signature..."
+          TARGET_HASH="${{ github.event.inputs.ksu_manager_hash }}"
+          
+          # カーネルソース内 (commonディレクトリ以下) から apk_sign.c または apk_sign.h を探す
+          cd kernel_workspace/common
+          SIGN_FILE=$(find . -type f \( -name "apk_sign.c" -o -name "apk_sign.h" \) | head -n 1)
+          
+          if [ -z "$SIGN_FILE" ]; then
+            echo "::warning::apk_sign file not found! Skipping signature patch."
+          else
+            echo "Found signature file at: $SIGN_FILE"
+            # ハッシュを置換する
+            # EXPECTED_HASH = "..." の形式を想定
+            sed -i 's/EXPECTED_HASH = ".*"/EXPECTED_HASH = "'"$TARGET_HASH"'"/' "$SIGN_FILE"
+            
+            # 書き換え結果の確認
+            grep "EXPECTED_HASH" "$SIGN_FILE"
           fi
 
       - name: 🔨 Build Kernel (ビルド実行)
