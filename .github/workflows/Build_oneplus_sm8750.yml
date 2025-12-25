@@ -1,4 +1,4 @@
-name: Build_oneplus_sm8750_SuKiSU_Full
+name: Build_oneplus_sm8750_Ultimate
 on:
   workflow_dispatch:
     inputs:
@@ -37,33 +37,44 @@ jobs:
         with:
           fetch-depth: 0
       
-      # 1. 環境変数の設定
+      # 1. 環境変数の設定 (Sched Patch用の設定を追加)
       - name: ⚙️ Set REPO_MANIFEST
         run: |
           case "${{ env.DEVICES_NAME }}" in
             oneplus_ace5_pro)
               echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_ace5_pro" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace5_pro_b" >> $GITHUB_ENV
               ;;
             oneplus_13)
               echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_13" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_13_b" >> $GITHUB_ENV
               ;;
             oneplus_ace_6)
               echo "REPO_MANIFEST=sm8750_b_16.0.0_ace_6" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace_6" >> $GITHUB_ENV
               ;;
             oneplus_13t)
               echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_13t" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_13t_b" >> $GITHUB_ENV
               ;;
             oneplus_pad_2_pro)
               echo "REPO_MANIFEST=sm8750_b_16.0.0_pad_2_pro" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_pad_2_pro_b" >> $GITHUB_ENV
               ;;
             oneplus_ace5_ultra)
               echo "REPO_MANIFEST=mt6991_v_15.0.2_ace5_ultra" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace5_ultra" >> $GITHUB_ENV
               ;;
             realme_GT7)
               echo "REPO_MANIFEST=mt6991_v_15.0.2_ace5_ultra" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace5_ultra" >> $GITHUB_ENV
+              ;;
+            realme_GT7pro|realme_GT7pro_Speed|realme_GT8)
+              echo "SCHED_FILE=none" >> $GITHUB_ENV
               ;;
             *)
               echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_13" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_13_b" >> $GITHUB_ENV
               ;;
           esac
           
@@ -140,53 +151,94 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           ccache -M 3G
 
-      # 4. KernelSU (SuKiSU) の導入
-      - name: ⚙️ Set SuKiSU (KernelSU)
+      # 4. SuKiSU 導入 & バージョン表記カスタム (@unidonbri)
+      - name: ⚙️ Set SuKiSU & Custom Version
         run: |
           cd kernel_workspace
           # SuKiSUのセットアップ
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          # バージョン定義の修正
+          # 【重要】バージョン表記を @unidonbri にカスタマイズ
           cd KernelSU
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          echo "KSUVER=114514" >> $GITHUB_ENV
+          echo "Current Commit: $GIT_COMMIT_HASH"
+          
+          # KSUのバージョンAPIを取得
+          KSU_API_VERSION=$(grep "KSU_VERSION_API :=" ../common/kernel/Kbuild | head -n1 | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+          [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
+          
+          # カスタムバージョン定義の作成 (@unidonbri)
+          # ここで既存の定義を削除して、自分たちの好きな名前に書き換えます
+          VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'-@unidonbri\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'-@unidonbri'
+          
           cd ../common
+          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
+          sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
+          sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
+          
+          # Kbuildの末尾に追加
+          echo "$VERSION_DEFINITIONS" >> kernel/Kbuild
+          
+          # 確認
+          echo "=== Modified kernel/Kbuild ==="
+          tail -n 10 kernel/Kbuild
+          echo "=============================="
 
-      # 5. SUSFS (SuKiSU Filesystem) の導入 【ここを復活・追加】
-      - name: 🔧 Set up SUSFS (For SuKiSU App Support)
+      # 5. SUSFS + Hymo (隠蔽 & システム最適化)
+      - name: 🔧 Set up SUSFS & Hymo
         run: |
           cd kernel_workspace
           echo "Adding SUSFS patches..."
-          
-          # SUSFSパッチの取得
           git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
           
-          # パッチとファイルのコピー
           cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
           cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-          
-          # 隠蔽用パッチの適用
           cp ./SukiSU_patch/69_hide_stuff.patch ./common/
           
-          # パッチ適用実行
           cd ./common
-          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS patch failed or already applied"
-          # 69_hide_stuffはコンフリクトする可能性があるため、失敗しても続行させる
+          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS patch failed"
           patch -p1 < 69_hide_stuff.patch || echo "Hide stuff patch skipped"
+          
+          # Hymo (高性能混合挂载元模块) の追加
+          echo "Adding HymoFS patches..."
+          wget https://raw.githubusercontent.com/Anatdx/HymoFS/refs/heads/main/patch/hymofs_with_susfs.patch
+          patch -p1 -F 3 < hymofs_with_susfs.patch || echo "Hymo patch failed"
 
-      # 6. defconfigの設定 (Root + SUSFS)
-      - name: 🔧 Enable KSU & SUSFS in defconfig
+      # 6. Sched Patch (ゲームパフォーマンス - 完美風馳)
+      - name: 🔧 Apply Sched Patch (Fengchi)
+        run: |
+          if [ "${{ env.SCHED_FILE }}" = "none" ]; then
+             echo "Skipping Sched Patch for this device."
+          else
+             cd kernel_workspace/common
+             if [ "${DEVICES_NAME}" = "oneplus_ace5_ultra" ] || [ "${DEVICES_NAME}" = "realme_GT7" ]; then
+                git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
+             else
+                git clone https://github.com/Numbersf/SCHED_PATCH.git -b "sm8750"
+             fi
+             
+             echo "Applying Sched Patch: fengchi_${{ env.SCHED_FILE }}.patch"
+             cp ./SCHED_PATCH/fengchi_${{ env.SCHED_FILE }}.patch ./
+             if [[ -f "fengchi_${{ env.SCHED_FILE }}.patch" ]]; then
+                dos2unix "fengchi_${{ env.SCHED_FILE }}.patch"
+                patch -p1 -F 3 < "fengchi_${{ env.SCHED_FILE }}.patch" || echo "Sched patch application failed"
+             else
+                echo "Patch file not found!"
+             fi
+          fi
+
+      # 7. defconfigの設定 (機能全部入り: KSU, SUSFS, Hymo, Sched)
+      - name: 🔧 Configure defconfig
         run: |
           cd kernel_workspace
           DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
           
-          # KernelSUの有効化
+          # KernelSU
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           
-          # SUSFSの有効化 (これがアプリ動作に必須の可能性大)
+          # SUSFS (Root隠蔽)
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
@@ -203,12 +255,20 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
           
+          # HymoFS (システム最適化)
+          echo "CONFIG_HYMOFS=y" >> $DEFCONFIG
+          
+          # ゲームパフォーマンス (BBR/FQ_CODELなど)
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
+          echo "CONFIG_NET_SCH_FQ_CODEL=y" >> $DEFCONFIG
+          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
+          
           # カーネル名の偽装
           ESCAPED_SUFFIX=$(printf '%s\n' "$DEFAULT_SUFFIX" | sed 's:[\/&]:\\&:g')
           sudo sed -i "s/-4k/$ESCAPED_SUFFIX/g" $DEFCONFIG
           sudo sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      # 7. HMBIRDパッチ (起動対策)
+      # 8. HMBIRDパッチ (起動対策)
       - name: 🔧 Apply HMBIRD Patch
         run: |
           cd kernel_workspace/common
@@ -216,7 +276,7 @@ jobs:
           cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/hmbird_patch.patch" ./hmbird_patch.patch
           patch -p1 -F 3 < hmbird_patch.patch || echo "HMBIRD Patch already applied."
 
-      # 8. ビルド (安定版: faketimeなし)
+      # 9. ビルド
       - name: 🔨 Build Kernel
         run: |
           WORKDIR="$(pwd)"
@@ -244,5 +304,5 @@ jobs:
       - name: 📤 Upload Result
         uses: actions/upload-artifact@v4
         with:
-         name: Kernel_SuKiSU_Full_${{ env.DEVICES_NAME }}
+         name: Kernel_Ultimate_${{ env.DEVICES_NAME }}
          path: ./AnyKernel3/*
