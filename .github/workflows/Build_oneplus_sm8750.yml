@@ -1,4 +1,4 @@
-name: Build_oneplus_sm8750_Perfect
+name: Build_oneplus_sm8750
 on:
   workflow_dispatch:
     inputs:
@@ -151,7 +151,7 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           ccache -M 3G
 
-      # 4. SuKiSU 導入 & バージョン表記カスタム (安全版)
+      # 4. SuKiSU 導入 & バージョン表記カスタム (修正版: 追記モード)
       - name: ⚙️ Set SuKiSU & Custom Version
         run: |
           cd kernel_workspace
@@ -163,29 +163,28 @@ jobs:
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "Current Commit: $GIT_COMMIT_HASH"
           
-          # マネージャーの要求(v3.1.8以上)を満たすために偽装する
           CUSTOM_VERSION="v3.1.8-${GIT_COMMIT_HASH}-@unidonbri"
           
-          # KernelSU/kernel/Kbuild を強制的に上書きして、確実にバージョンを定義する
-          # 複雑なsedはやめて、ファイルごと作り変えることで空文字エラーを防ぐ
-          if [ -d "kernel" ]; then
-             echo "Overwriting KernelSU/kernel/Kbuild with custom definitions..."
+          # KernelSU/kernel/Kbuild にバージョン情報を【追記】する (上書きしない！)
+          if [ -f "kernel/Kbuild" ]; then
+             echo "Appending custom version to KernelSU/kernel/Kbuild..."
              
-             # APIバージョンを 114514 (マジックナンバー) にしてチェックを回避
-             # FULLバージョンに @unidonbri を付与
-             cat <<EOF > kernel/Kbuild
-          ccflags-y += -DKSU_VERSION_API=114514
-          ccflags-y += -DKSU_VERSION_FULL=\\\"$CUSTOM_VERSION\\\"
-          EOF
+             # 重複を避けるため既存のバージョン定義があれば削除
+             sed -i '/KSU_VERSION_API/d' kernel/Kbuild
+             sed -i '/KSU_VERSION_FULL/d' kernel/Kbuild
+             
+             # 末尾に追記 (>> を使用)
+             echo "ccflags-y += -DKSU_VERSION_API=114514" >> kernel/Kbuild
+             echo "ccflags-y += -DKSU_VERSION_FULL=\\\"$CUSTOM_VERSION\\\"" >> kernel/Kbuild
              
              echo "Success: Version patched to $CUSTOM_VERSION (API: 114514)"
-             cat kernel/Kbuild
+             tail -n 5 kernel/Kbuild
           else
-             echo "Error: KernelSU/kernel directory not found!"
+             echo "Error: KernelSU/kernel/Kbuild not found!"
              exit 1
           fi
 
-      # 5. SUSFS + Hymo (隠蔽 & システム最適化) - 【URL修正版】
+      # 5. SUSFS + Hymo (隠蔽 & システム最適化)
       - name: 🔧 Set up SUSFS & Hymo
         run: |
           cd kernel_workspace
@@ -202,9 +201,8 @@ jobs:
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS patch failed"
           patch -p1 < 69_hide_stuff.patch || echo "Hide stuff patch skipped"
           
-          # Hymo (高性能混合挂载元模块) の追加
+          # Hymo (高性能混合挂载元模块)
           echo "Adding HymoFS patches..."
-          # 【修正】URLを 'android15_6.6' ブランチに変更 (これで404回避)
           wget https://raw.githubusercontent.com/Anatdx/HymoFS/android15_6.6/patch/hymofs_with_susfs.patch
           
           if [ -f "hymofs_with_susfs.patch" ]; then
