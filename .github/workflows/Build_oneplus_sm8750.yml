@@ -184,27 +184,28 @@ jobs:
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
 
-      # 7. パッケージ化（ここを以前の確実な方法に戻しました）
+      # 7. パッケージ化（修正版：解凍エラーを回避するロジック）
       - name: 📦 Make AnyKernel3
         run: |
-          # A. リポジトリ内の設定済みAnyKernel3.zipを探して使う
+          # 古いフォルダがあれば消しておく
+          rm -rf AnyKernel3
+          
+          # A. リポジトリ内のAnyKernel3.zipがある場合 -> 解凍して使う
           if [ -f "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ]; then
-             echo "✅ Using local AnyKernel3.zip from repo..."
-             cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ./AnyKernel3.zip
+             echo "✅ Found local AnyKernel3.zip"
+             unzip -q "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" -d AnyKernel3
+          
+          # B. ない場合 -> GitHubからクローンしてそのまま使う（ZIP化→解凍の無駄を削除）
           else
-             # B. 万が一ない場合はダウンロードし、デバイスチェックを無効化する（これがFlash失敗回避の鍵）
-             echo "⚠️ Local AK3 not found. Downloading & Patching..."
+             echo "⚠️ Local AK3 not found. Downloading..."
              git clone https://github.com/osm0sis/AnyKernel3.git
-             # デバイスチェックを強制的に無効化 (do.devicecheck=0)
+             
+             # 【重要】デバイスチェックを無効化 (Flash失敗対策)
+             # do.devicecheck=1 を 0 に書き換える
              sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-             cd AnyKernel3
-             zip -r ../AnyKernel3.zip .
-             cd ..
           fi
 
-          # 解凍してImageを入れ替え
-          unzip -q AnyKernel3.zip -d AnyKernel3
-          
+          # カーネルイメージの配置
           if [ -f "kernel_workspace/common/out/arch/arm64/boot/Image" ]; then
              cp "kernel_workspace/common/out/arch/arm64/boot/Image" AnyKernel3/
           else
@@ -213,7 +214,7 @@ jobs:
           
           cd AnyKernel3
           
-          # 権限設定（エラー防止）
+          # 権限設定
           chmod -R 755 .
           
           # 最終ZIP作成
