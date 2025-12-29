@@ -2,9 +2,8 @@ name: Build_oneplus_MT6991
 on:
   workflow_dispatch:
     inputs:
-      # 機種選択はMTK兄弟機のみに限定
       DEVICES_NAME:
-        description: "📝 対象機種"
+        description: "📝 機型を選択"
         required: true
         type: choice
         options:
@@ -25,7 +24,7 @@ on:
         type: boolean
         
       ENABLE_SCX:
-        description: "📝 完美風馳 (Sched Patch for MT6991)"
+        description: "📝 完美風馳 (Sched Patch)"
         required: false
         default: true
         type: boolean
@@ -39,7 +38,7 @@ jobs:
       KEEP_ORIGINAL_SETTINGS: ${{ github.event.inputs.keep_original_settings }}
       ENABLE_HYMO: ${{ github.event.inputs.ENABLE_HYMO }}
       ENABLE_SCX: ${{ github.event.inputs.ENABLE_SCX }}
-      # MT6991用の固定設定 [cite: 11, 12, 68, 69]
+      # 基本設定
       REPO_MANIFEST: "mt6991_v_15.0.2_ace5_ultra"
       SCHED_FILE: "oneplus_ace5_ultra"
       DEVICE_CONFIG: "gki_defconfig"
@@ -61,7 +60,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2
           
           echo "📥 Downloading Kernel Source (MT6991)..."
-          # Repoを使わず、OnePlusOSSから直接ZIPを落とす [cite: 22, 89]
           ZIP_URL="https://github.com/OnePlusOSS/android_kernel_oneplus_mt6991/archive/refs/heads/oneplus/${REPO_MANIFEST}.zip"
           
           aria2c -s16 -x16 -k1M "$ZIP_URL" -o common.zip
@@ -78,7 +76,7 @@ jobs:
           unzip -q build-tools.zip
           rm build-tools.zip
           
-          # クリーンアップ [cite: 25, 92]
+          # クリーンアップ
           rm common/android/abi_gki_protected_exports_* || true
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
@@ -96,7 +94,7 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           ccache -M 3G
 
-      # 3. 圧縮パッチ (LZ4/ZSTD)
+      # 3. 圧縮パッチ
       - name: 🔧 Apply Compression Patches
         run: |
           cd kernel_workspace
@@ -108,16 +106,16 @@ jobs:
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
 
-      # 4. KernelSU / SUSFS / HymoFS (修正版)
+      # 4. KernelSU / SUSFS / HymoFS
       - name: 🧩 Apply KernelSU & SUSFS & HymoFS
         run: |
           cd kernel_workspace
           
-          # A. SukiSU (MediaTek安定版: builtin) [cite: 30, 108, 200]
+          # SukiSU (builtin)
           echo "Configuring SukiSU Ultra (builtin)..."
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          # B. SUSFS (Android 15 GKI) [cite: 35, 117, 209]
+          # SUSFS
           echo "Applying SUSFS..."
           git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
@@ -131,12 +129,11 @@ jobs:
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS Patch Failed!"
           patch -p1 < 69_hide_stuff.patch || true
           
-          # C. HymoFS (Android 15対応ブランチを使用)
+          # HymoFS (Android 15 Fix)
           if [ "${{ env.ENABLE_HYMO }}" = "true" ]; then
             echo "Adding HymoFS Patch (Android 15 Fix)..."
             wget https://raw.githubusercontent.com/Anatdx/HymoFS/refs/heads/android15_6.6/patch/hymofs_with_susfs.patch
             patch -p1 -F 3 < hymofs_with_susfs.patch || echo "HymoFS Patch Failed!"
-            
             echo "CONFIG_HYMOFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           fi
           
@@ -152,18 +149,17 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
 
-      # 5. Sched Patch (完美風馳) 
+      # 5. Sched Patch
       - name: 🔧 Apply Sched Patch
         if: ${{ env.ENABLE_SCX == 'true' }}
         run: |
           cd kernel_workspace/common
-          # MT6991専用ブランチを指定 
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
           
           cp ./SCHED_PATCH/fengchi_${{ env.SCHED_FILE }}.patch ./
           if [[ -f "fengchi_${{ env.SCHED_FILE }}.patch" ]]; then
              dos2unix "fengchi_${{ env.SCHED_FILE }}.patch"
-             patch -p1 -F 3 < "fengchi_${{ env.SCHED_FILE }}.patch" || echo "Sched Patch Failed"
+             patch -p1 -F 3 < "fengchi_${{ env.SCHED_FILE }}.patch"
           fi
 
       # 6. ビルド実行
@@ -188,10 +184,26 @@ jobs:
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
 
-      # 7. パッケージ化
+      # 7. パッケージ化（ここを以前の確実な方法に戻しました）
       - name: 📦 Make AnyKernel3
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
+          # A. リポジトリ内の設定済みAnyKernel3.zipを探して使う
+          if [ -f "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ]; then
+             echo "✅ Using local AnyKernel3.zip from repo..."
+             cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ./AnyKernel3.zip
+          else
+             # B. 万が一ない場合はダウンロードし、デバイスチェックを無効化する（これがFlash失敗回避の鍵）
+             echo "⚠️ Local AK3 not found. Downloading & Patching..."
+             git clone https://github.com/osm0sis/AnyKernel3.git
+             # デバイスチェックを強制的に無効化 (do.devicecheck=0)
+             sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+             cd AnyKernel3
+             zip -r ../AnyKernel3.zip .
+             cd ..
+          fi
+
+          # 解凍してImageを入れ替え
+          unzip -q AnyKernel3.zip -d AnyKernel3
           
           if [ -f "kernel_workspace/common/out/arch/arm64/boot/Image" ]; then
              cp "kernel_workspace/common/out/arch/arm64/boot/Image" AnyKernel3/
@@ -200,8 +212,14 @@ jobs:
           fi
           
           cd AnyKernel3
+          
+          # 権限設定（エラー防止）
+          chmod -R 755 .
+          
+          # 最終ZIP作成
           FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}_MT6991.zip"
-          zip -r "$FINAL_ZIP" *
+          zip -r9 "$FINAL_ZIP" . -x ".git*" -x "README.md" -x ".github*"
+          
           mv "$FINAL_ZIP" ../
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
 
