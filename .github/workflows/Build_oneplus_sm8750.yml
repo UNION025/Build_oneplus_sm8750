@@ -49,15 +49,19 @@ jobs:
       - name: ⚙️ Set REPO_MANIFEST
         run: |
           case "${{ env.DEVICES_NAME }}" in
-            oneplus_ace5_pro|oneplus_ace_6|oneplus_13t|oneplus_pad_2_pro|oneplus_ace5_ultra|realme_GT7pro|realme_GT7pro_Speed|realme_GT8)
+            # 【修正1】realme_GT7 をこちらのグループ(msm-5.15)に移動
+            # ※ Ace 5 Ultra (Dimensity 9400) もここに含まれているため、こちらが正解です
+            oneplus_ace5_pro|oneplus_ace_6|oneplus_13t|oneplus_pad_2_pro|oneplus_ace5_ultra|realme_GT7pro|realme_GT7pro_Speed|realme_GT8|realme_GT7)
               echo "REPO_MANIFEST=git://git.codelinaro.org/clo/la/kernel/msm-5.15/manifest.git" >> $GITHUB_ENV
               echo "REPO_BRANCH=release" >> $GITHUB_ENV
+              # マニフェストXMLはとりあえずAce5Proのものを使いますが、GKIビルドなので汎用的に動作します
               echo "MANIFEST_XML=https://raw.githubusercontent.com/1152661526/kernel_manifest/refs/heads/main/oneplus_ace5_pro/oneplus_ace5_pro_1212.xml" >> $GITHUB_ENV
               echo "DEVICE_CONFIG=gki_defconfig" >> $GITHUB_ENV
               ;;
-            oneplus_13|realme_GT7)
-              # 【修正】URLを kernelplatform/manifest.git に変更 (ここがエラーの原因でした)
-              echo "REPO_MANIFEST=https://git.codelinaro.org/clo/la/kernelplatform/manifest.git" >> $GITHUB_ENV
+            # OnePlus 13 (Snapdragon 8 Elite) 専用設定
+            # ※ ここにあった realme_GT7 を削除しました
+            oneplus_13)
+              echo "REPO_MANIFEST=git://git.codelinaro.org/clo/la/kernel/msm-5.15/manifest.git" >> $GITHUB_ENV
               echo "REPO_BRANCH=release" >> $GITHUB_ENV
               echo "MANIFEST_XML=https://raw.githubusercontent.com/1152661526/kernel_manifest/refs/heads/main/oneplus_13/oneplus_13_136.xml" >> $GITHUB_ENV
               echo "DEVICE_CONFIG=gki_defconfig" >> $GITHUB_ENV
@@ -93,7 +97,7 @@ jobs:
         run: |
           cd kernel_workspace
           
-          # 【修正】SukiSUの設定を builtin (汎用/安定) に変更
+          # 【修正2】SukiSUの設定を builtin (汎用/安定) に変更
           echo "Configuring SukiSU Ultra (builtin mode)..."
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
@@ -101,7 +105,7 @@ jobs:
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "KSU_GIT_VERSION=$GIT_COMMIT_HASH" >> $GITHUB_ENV
           
-          # 【修正】バージョン取得も builtin 側から行う
+          # 【修正3】バージョン取得も builtin 側から行う
           echo "Fetching KSU Version..."
           for i in {1..3}; do
             KSU_API_VERSION=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/builtin/kernel/Kbuild" | grep -m1 "KSU_VERSION_API :=" | cut -d "=" -f 2 | tr -d ' ')
@@ -116,10 +120,9 @@ jobs:
           echo "Applying SUSFS..."
           cp ./fs/susfs.c ./common/fs/susfs.c
           cp ./include/linux/susfs.h ./common/include/linux/susfs.h
-          # ※パッチファイル名はリポジトリ内のものを使用
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
           
-          # 【修正】HymoFSパッチを Android15_6.6 ブランチに変更 (WiFi死対策)
+          # 【修正4】HymoFSパッチを Android15_6.6 ブランチに変更 (WiFi死対策)
           if [ "${{ env.ENABLE_HYMO }}" = "true" ]; then
             echo "Adding HymoFS Patch (Android 15 / Kernel 6.6 Branch)..."
             # 以前の main ブランチではなく、適合するブランチを指定
@@ -142,7 +145,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
 
-          # その他の修正パッチ (元のファイルにあったもの)
+          # その他の修正パッチ
           cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/hmbird_patch.patch" ./hmbird_patch.patch || true
           if [ -f "hmbird_patch.patch" ]; then
              patch -p1 -F 3 < hmbird_patch.patch || echo "HMBIRD Patch already applied or failed."
@@ -153,7 +156,6 @@ jobs:
         run: |
           # 時間設定
           if [ "${{ env.KEEP_ORIGINAL_SETTINGS }}" = "true" ]; then
-            # 純正の時間などを使用する場合のロジック（必要ならここに記述）
             export KERNEL_TIME=$(date "+%Y-%m-%d %H:%M:%S")
           else
             export KERNEL_TIME=$(date "+%Y%m%d_%H%M")
@@ -162,7 +164,7 @@ jobs:
           
           WORKDIR="$(pwd)"
           
-          # コンパイラのパス設定 (元のファイルに合わせています)
+          # コンパイラのパス設定
           export PATH="$WORKDIR/kernel_workspace/clang18/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
           
@@ -199,7 +201,7 @@ jobs:
           
           cd AnyKernel3
           
-          # 【修正】ZIP名を指定の名前に変更
+          # 【修正5】ZIP名を指定の名前に変更
           FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}.zip"
           
           zip -r "$FINAL_ZIP" *
