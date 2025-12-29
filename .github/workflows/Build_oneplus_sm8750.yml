@@ -24,7 +24,7 @@ on:
         required: false
         default: true
         type: boolean
-        
+      
       ENABLE_HYMO:
         description: "📝 HymoFSを有効にする (推奨: true)"
         required: false
@@ -56,7 +56,8 @@ jobs:
               echo "DEVICE_CONFIG=gki_defconfig" >> $GITHUB_ENV
               ;;
             oneplus_13|realme_GT7)
-              echo "REPO_MANIFEST=https://git.codelinaro.org/clo/la/kernel/manifest.git" >> $GITHUB_ENV
+              # 【修正】URLを kernelplatform/manifest.git に変更 (ここがエラーの原因でした)
+              echo "REPO_MANIFEST=https://git.codelinaro.org/clo/la/kernelplatform/manifest.git" >> $GITHUB_ENV
               echo "REPO_BRANCH=release" >> $GITHUB_ENV
               echo "MANIFEST_XML=https://raw.githubusercontent.com/1152661526/kernel_manifest/refs/heads/main/oneplus_13/oneplus_13_136.xml" >> $GITHUB_ENV
               echo "DEVICE_CONFIG=gki_defconfig" >> $GITHUB_ENV
@@ -80,17 +81,19 @@ jobs:
         run: |
           mkdir kernel_workspace
           cd kernel_workspace
+          # 初期化 (bootstrap)
           repo init -u ${{ env.REPO_MANIFEST }} -b ${{ env.REPO_BRANCH }}
-          # マニフェストファイルをローカルXMLで上書き
+          # マニフェストの上書き
           curl -o .repo/manifests/default.xml ${{ env.MANIFEST_XML }}
+          # 同期
           repo sync -c -j$(nproc --all) --no-clone-bundle --no-tags
           
-      # 4. KSU / SUSFS / HymoFS のパッチ適用（ここが最重要修正箇所！）
+      # 4. KSU / SUSFS / HymoFS のパッチ適用
       - name: 🧩 KernelSU & SUSFS & HymoFS Patch
         run: |
           cd kernel_workspace
           
-          # 【修正1】SukiSUの設定を builtin (汎用/安定) に変更
+          # 【修正】SukiSUの設定を builtin (汎用/安定) に変更
           echo "Configuring SukiSU Ultra (builtin mode)..."
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
@@ -98,7 +101,7 @@ jobs:
           GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
           echo "KSU_GIT_VERSION=$GIT_COMMIT_HASH" >> $GITHUB_ENV
           
-          # 【修正2】バージョン取得も builtin 側から行う
+          # 【修正】バージョン取得も builtin 側から行う
           echo "Fetching KSU Version..."
           for i in {1..3}; do
             KSU_API_VERSION=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/builtin/kernel/Kbuild" | grep -m1 "KSU_VERSION_API :=" | cut -d "=" -f 2 | tr -d ' ')
@@ -109,14 +112,14 @@ jobs:
           
           cd ..
           
-          # SUSFSパッチ（変更なし）
+          # SUSFSパッチ
           echo "Applying SUSFS..."
           cp ./fs/susfs.c ./common/fs/susfs.c
           cp ./include/linux/susfs.h ./common/include/linux/susfs.h
-          # ※ファイル名がリポジトリ内のものと一致しているか確認してください
+          # ※パッチファイル名はリポジトリ内のものを使用
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
           
-          # 【修正3】HymoFSパッチを Android15_6.6 ブランチに変更（WiFi死対策の決定打）
+          # 【修正】HymoFSパッチを Android15_6.6 ブランチに変更 (WiFi死対策)
           if [ "${{ env.ENABLE_HYMO }}" = "true" ]; then
             echo "Adding HymoFS Patch (Android 15 / Kernel 6.6 Branch)..."
             # 以前の main ブランチではなく、適合するブランチを指定
@@ -124,63 +127,86 @@ jobs:
             patch -p1 -F 3 < hymofs_with_susfs.patch || echo "HymoFS Patch applied with offsets or failed."
             
             # コンフィグ追加
-            echo "CONFIG_HYMOFS=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_HYMOFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           fi
           
           # configの登録
-          echo "CONFIG_KSU_SUSFS=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
+
+          # その他の修正パッチ (元のファイルにあったもの)
+          cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/hmbird_patch.patch" ./hmbird_patch.patch || true
+          if [ -f "hmbird_patch.patch" ]; then
+             patch -p1 -F 3 < hmbird_patch.patch || echo "HMBIRD Patch already applied or failed."
+          fi
 
       # 5. ビルド実行
       - name: 🔨 Build Kernel
         run: |
+          # 時間設定
+          if [ "${{ env.KEEP_ORIGINAL_SETTINGS }}" = "true" ]; then
+            # 純正の時間などを使用する場合のロジック（必要ならここに記述）
+            export KERNEL_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+          else
+            export KERNEL_TIME=$(date "+%Y%m%d_%H%M")
+          fi
+          echo "KERNEL_TIME=$KERNEL_TIME" >> $GITHUB_ENV
+          
+          WORKDIR="$(pwd)"
+          
+          # コンパイラのパス設定 (元のファイルに合わせています)
+          export PATH="$WORKDIR/kernel_workspace/clang18/bin:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
+          
+          # キャッシュ設定
+          export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
+          export CCACHE_EXEC=$(which ccache)
+          export USE_CCACHE=1
+          
           cd kernel_workspace
           
-          # 環境変数の設定
-          WORKDIR="$(pwd)"
-          export PATH="$WORKDIR/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
-          export PATH="$WORKDIR/prebuilts/build-tools/linux-x86/bin:$PATH"
+          # ディレクトリ構造によっては common に移動
+          if [ -d "common" ]; then cd common; fi
           
-          # GKIカーネルのビルド
           echo "Starting Build..."
-          ./tools/bazel run --config=fast //common:kernel_aarch64_dist -- --build_config=common/build.config.gki.aarch64
-          
-      # 6. AnyKernel3 でパッケージ化（ZIP名変更込み）
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
+
+      # 6. AnyKernel3 でパッケージ化
       - name: 📦 Make AnyKernel3
         run: |
-          # 成果物の場所（Bazelビルドの場合の一般的なパス）
-          IMAGE_PATH="kernel_workspace/out/kernel_aarch64/dist/Image"
+          # 元のファイルにあったBin内のAK3を使用
+          cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ./AnyKernel3.zip
+          unzip AnyKernel3.zip -d AnyKernel3
           
-          if [ ! -f "$IMAGE_PATH" ]; then
-             echo "Image not found at $IMAGE_PATH. Trying fallback..."
-             IMAGE_PATH=$(find kernel_workspace/out -name Image | head -n 1)
-          fi
-          
-          if [ -f "$IMAGE_PATH" ]; then
-            git clone https://github.com/osm0sis/AnyKernel3.git
-            cp "$IMAGE_PATH" AnyKernel3/
-            cd AnyKernel3
-            
-            # 【修正4】ZIPファイル名を指定の形式に変更
-            ZIP_NAME="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}.zip"
-            
-            zip -r "$ZIP_NAME" *
-            
-            # GitHub Actionsのアップロード用に場所を移動
-            mv "$ZIP_NAME" ../
-            echo "FINAL_ZIP=$ZIP_NAME" >> $GITHUB_ENV
+          # ビルドされたImageを探す
+          if [ -f "kernel_workspace/common/out/arch/arm64/boot/Image" ]; then
+             cp "kernel_workspace/common/out/arch/arm64/boot/Image" AnyKernel3/
+          elif [ -f "kernel_workspace/out/arch/arm64/boot/Image" ]; then
+             cp "kernel_workspace/out/arch/arm64/boot/Image" AnyKernel3/
           else
-            echo "Kernel Image compilation failed!"
-            exit 1
+             # GKI構成の場合のパス
+             find kernel_workspace -name Image | head -n 1 | xargs -I {} cp {} AnyKernel3/
           fi
+          
+          cd AnyKernel3
+          
+          # 【修正】ZIP名を指定の名前に変更
+          FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}.zip"
+          
+          zip -r "$FINAL_ZIP" *
+          
+          # アップロード用に移動
+          mv "$FINAL_ZIP" ../
+          echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
 
       # 7. アップロード
       - name: 📤 Upload Build Artifact
