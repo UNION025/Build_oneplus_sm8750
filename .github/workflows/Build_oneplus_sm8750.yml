@@ -184,41 +184,19 @@ jobs:
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
 
-      # 7. パッケージ化（ここを修正：備え付けAK3使用 + 権限Fix）
+      # 7. パッケージ化 (修正: リポジトリのmain.binを使用)
       - name: 📦 Make AnyKernel3
         run: |
-          # 以前のフォルダを掃除
-          rm -rf AnyKernel3 AnyKernel3.zip
+          # 画像で確認された main.bin を使用してパッケージ化を行う
+          cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/main.bin" ./
+          chmod +x main.bin
           
-          # 【重要】リポジトリ内の備え付けZIPを使用
-          if [ -f "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ]; then
-             echo "✅ Using repository provided AnyKernel3.zip"
-             cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ./AnyKernel3.zip
-          else
-             echo "❌ Error: Bin/AnyKernel3.zip not found! Cannot proceed."
-             exit 1
-          fi
-
-          # 解凍
-          unzip -q AnyKernel3.zip -d AnyKernel3
+          # main.bin を実行 (フォーク元と同じ挙動)
+          ./main.bin "make_anykernel3"
+          rm -rf ./main.bin
           
-          # カーネルイメージのコピー
-          if [ -f "kernel_workspace/common/out/arch/arm64/boot/Image" ]; then
-             cp "kernel_workspace/common/out/arch/arm64/boot/Image" AnyKernel3/
-          else
-             find kernel_workspace -name Image | head -n 1 | xargs -I {} cp {} AnyKernel3/
-          fi
-          
-          cd AnyKernel3
-          
-          # 【重要】実行権限を再付与 (Extract failure対策)
-          chmod -R 755 .
-          
-          # ZIP作成 (余計なフォルダを作らないようにカレントディレクトリを対象にする)
-          FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}_MT6991.zip"
-          zip -r9 "$FINAL_ZIP" . -x ".git*" -x "README.md" -x ".github*"
-          
-          mv "$FINAL_ZIP" ../
+          # 生成されたZIPを探して環境変数にセット
+          FINAL_ZIP=$(find AnyKernel3 -name "*.zip" | head -n 1)
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
 
       - name: 📤 Upload Build Artifact
