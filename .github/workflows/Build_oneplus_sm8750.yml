@@ -106,7 +106,7 @@ jobs:
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
 
-      # 4. KernelSU / SUSFS / HymoFS
+      # 4. KernelSU / SUSFS / HymoFS (MediaTek安定版)
       - name: 🧩 Apply KernelSU & SUSFS & HymoFS
         run: |
           cd kernel_workspace
@@ -184,28 +184,25 @@ jobs:
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
 
-      # 7. パッケージ化（修正版：解凍エラーを回避するロジック）
+      # 7. パッケージ化（ここを修正：備え付けAK3使用 + 権限Fix）
       - name: 📦 Make AnyKernel3
         run: |
-          # 古いフォルダがあれば消しておく
-          rm -rf AnyKernel3
+          # 以前のフォルダを掃除
+          rm -rf AnyKernel3 AnyKernel3.zip
           
-          # A. リポジトリ内のAnyKernel3.zipがある場合 -> 解凍して使う
+          # 【重要】リポジトリ内の備え付けZIPを使用
           if [ -f "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ]; then
-             echo "✅ Found local AnyKernel3.zip"
-             unzip -q "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" -d AnyKernel3
-          
-          # B. ない場合 -> GitHubからクローンしてそのまま使う（ZIP化→解凍の無駄を削除）
+             echo "✅ Using repository provided AnyKernel3.zip"
+             cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ./AnyKernel3.zip
           else
-             echo "⚠️ Local AK3 not found. Downloading..."
-             git clone https://github.com/osm0sis/AnyKernel3.git
-             
-             # 【重要】デバイスチェックを無効化 (Flash失敗対策)
-             # do.devicecheck=1 を 0 に書き換える
-             sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+             echo "❌ Error: Bin/AnyKernel3.zip not found! Cannot proceed."
+             exit 1
           fi
 
-          # カーネルイメージの配置
+          # 解凍
+          unzip -q AnyKernel3.zip -d AnyKernel3
+          
+          # カーネルイメージのコピー
           if [ -f "kernel_workspace/common/out/arch/arm64/boot/Image" ]; then
              cp "kernel_workspace/common/out/arch/arm64/boot/Image" AnyKernel3/
           else
@@ -214,10 +211,10 @@ jobs:
           
           cd AnyKernel3
           
-          # 権限設定
+          # 【重要】実行権限を再付与 (Extract failure対策)
           chmod -R 755 .
           
-          # 最終ZIP作成
+          # ZIP作成 (余計なフォルダを作らないようにカレントディレクトリを対象にする)
           FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}_MT6991.zip"
           zip -r9 "$FINAL_ZIP" . -x ".git*" -x "README.md" -x ".github*"
           
