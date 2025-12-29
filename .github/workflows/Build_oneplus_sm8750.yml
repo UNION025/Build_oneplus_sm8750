@@ -1,32 +1,31 @@
-name: Build_oneplus_sm8750
+name: Build_oneplus_MT6991
 on:
   workflow_dispatch:
     inputs:
+      # 機種選択はMTK兄弟機のみに限定
       DEVICES_NAME:
-        description: "📝 機型を選択："
+        description: "📝 対象機種"
         required: true
         type: choice
         options:
-          - 'oneplus_13'
-          - 'oneplus_ace5_pro'
-          - 'oneplus_ace_6'
-          - 'oneplus_13t'
-          - 'oneplus_pad_2_pro'
-          - 'oneplus_ace5_ultra'
           - 'realme_GT7'
-          - 'realme_GT7pro'
-          - 'realme_GT7pro_Speed'
-          - 'realme_GT8'
+          - 'oneplus_ace5_ultra'
         default: 'realme_GT7'
 
       keep_original_settings:
-        description: "📝 純正のカーネル名と時間を保持する (推奨: true)"
+        description: "📝 純正のカーネル名と時間を保持する"
         required: false
         default: true
         type: boolean
       
       ENABLE_HYMO:
-        description: "📝 HymoFSを有効にする (推奨: true)"
+        description: "📝 HymoFS"
+        required: false
+        default: true
+        type: boolean
+        
+      ENABLE_SCX:
+        description: "📝 完美風馳 (Sched Patch for MT6991)"
         required: false
         default: true
         type: boolean
@@ -36,104 +35,112 @@ jobs:
     name: Build_${{ github.event.inputs.DEVICES_NAME }}
     runs-on: ubuntu-latest
     env:
-      DEVICES_NAME:           ${{ github.event.inputs.DEVICES_NAME }}
+      DEVICES_NAME: ${{ github.event.inputs.DEVICES_NAME }}
       KEEP_ORIGINAL_SETTINGS: ${{ github.event.inputs.keep_original_settings }}
-      ENABLE_HYMO:            ${{ github.event.inputs.ENABLE_HYMO }}
+      ENABLE_HYMO: ${{ github.event.inputs.ENABLE_HYMO }}
+      ENABLE_SCX: ${{ github.event.inputs.ENABLE_SCX }}
+      # MT6991用の固定設定 [cite: 11, 12, 68, 69]
+      REPO_MANIFEST: "mt6991_v_15.0.2_ace5_ultra"
+      SCHED_FILE: "oneplus_ace5_ultra"
+      DEVICE_CONFIG: "gki_defconfig"
     
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
-      # 1. 環境変数の設定
-      - name: ⚙️ Set REPO_MANIFEST
-        run: |
-          case "${{ env.DEVICES_NAME }}" in
-            # 【修正1】realme_GT7 をこちらのグループ(msm-5.15)に移動
-            # ※ Ace 5 Ultra (Dimensity 9400) もここに含まれているため、こちらが正解です
-            oneplus_ace5_pro|oneplus_ace_6|oneplus_13t|oneplus_pad_2_pro|oneplus_ace5_ultra|realme_GT7pro|realme_GT7pro_Speed|realme_GT8|realme_GT7)
-              echo "REPO_MANIFEST=git://git.codelinaro.org/clo/la/kernel/msm-5.15/manifest.git" >> $GITHUB_ENV
-              echo "REPO_BRANCH=release" >> $GITHUB_ENV
-              # マニフェストXMLはとりあえずAce5Proのものを使いますが、GKIビルドなので汎用的に動作します
-              echo "MANIFEST_XML=https://raw.githubusercontent.com/1152661526/kernel_manifest/refs/heads/main/oneplus_ace5_pro/oneplus_ace5_pro_1212.xml" >> $GITHUB_ENV
-              echo "DEVICE_CONFIG=gki_defconfig" >> $GITHUB_ENV
-              ;;
-            # OnePlus 13 (Snapdragon 8 Elite) 専用設定
-            # ※ ここにあった realme_GT7 を削除しました
-            oneplus_13)
-              echo "REPO_MANIFEST=git://git.codelinaro.org/clo/la/kernel/msm-5.15/manifest.git" >> $GITHUB_ENV
-              echo "REPO_BRANCH=release" >> $GITHUB_ENV
-              echo "MANIFEST_XML=https://raw.githubusercontent.com/1152661526/kernel_manifest/refs/heads/main/oneplus_13/oneplus_13_136.xml" >> $GITHUB_ENV
-              echo "DEVICE_CONFIG=gki_defconfig" >> $GITHUB_ENV
-              ;;
-            *)
-              echo "Unsupported device: ${{ env.DEVICES_NAME }}"
-              exit 1
-              ;;
-          esac
 
-      # 2. ビルドツールの準備
-      - name: 🛠️ Setup Build Environment
+      # 1. 環境構築 & ソース取得 (高速ZIPダウンロード方式)
+      - name: 📥 Setup & Download Source
         run: |
-          sudo apt-get update
-          sudo apt-get install -y repo git curl wget python3 python3-pip
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      # 3. カーネルソースの取得
-      - name: 📥 Clone Kernel Source
-        run: |
+          rm -rf kernel_workspace
           mkdir kernel_workspace
           cd kernel_workspace
-          # 初期化 (bootstrap)
-          repo init -u ${{ env.REPO_MANIFEST }} -b ${{ env.REPO_BRANCH }}
-          # マニフェストの上書き
-          curl -o .repo/manifests/default.xml ${{ env.MANIFEST_XML }}
-          # 同期
-          repo sync -c -j$(nproc --all) --no-clone-bundle --no-tags
           
-      # 4. KSU / SUSFS / HymoFS のパッチ適用
-      - name: 🧩 KernelSU & SUSFS & HymoFS Patch
+          # 依存関係
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2
+          
+          echo "📥 Downloading Kernel Source (MT6991)..."
+          # Repoを使わず、OnePlusOSSから直接ZIPを落とす [cite: 22, 89]
+          ZIP_URL="https://github.com/OnePlusOSS/android_kernel_oneplus_mt6991/archive/refs/heads/oneplus/${REPO_MANIFEST}.zip"
+          
+          aria2c -s16 -x16 -k1M "$ZIP_URL" -o common.zip
+          unzip -q common.zip
+          mv android_kernel_oneplus_mt6991-oneplus-${REPO_MANIFEST} common
+          rm -rf common.zip
+          
+          echo "📥 Downloading Toolchain..."
+          mkdir -p clang18
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip -o clang.zip
+          unzip -q clang.zip -d clang18
+          rm clang.zip
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o build-tools.zip
+          unzip -q build-tools.zip
+          rm build-tools.zip
+          
+          # クリーンアップ [cite: 25, 92]
+          rm common/android/abi_gki_protected_exports_* || true
+          sed -i 's/ -dirty//g' common/scripts/setlocalversion
+
+      # 2. ccache設定
+      - name: 🔧 Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache_${{ env.DEVICES_NAME }}
+          key: ccache-${{ env.DEVICES_NAME }}-${{ runner.os }}
+          restore-keys: ccache-${{ env.DEVICES_NAME }}-
+
+      - name: 🔧 Init ccache
+        run: |
+          export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
+          mkdir -p "$CCACHE_DIR"
+          ccache -M 3G
+
+      # 3. 圧縮パッチ (LZ4/ZSTD)
+      - name: 🔧 Apply Compression Patches
+        run: |
+          cd kernel_workspace
+          git clone https://github.com/cctv18/oppo_oplus_realme_sm8750.git
+          cp ./oppo_oplus_realme_sm8750/zram_patch/001-lz4.patch ./common
+          cp ./oppo_oplus_realme_sm8750/zram_patch/lz4armv8.S ./common/lib
+          cp ./oppo_oplus_realme_sm8750/zram_patch/002-zstd.patch ./common/
+          cd common
+          git apply -p1 < 001-lz4.patch || true
+          patch -p1 < 002-zstd.patch || true
+
+      # 4. KernelSU / SUSFS / HymoFS (修正版)
+      - name: 🧩 Apply KernelSU & SUSFS & HymoFS
         run: |
           cd kernel_workspace
           
-          # 【修正2】SukiSUの設定を builtin (汎用/安定) に変更
-          echo "Configuring SukiSU Ultra (builtin mode)..."
+          # A. SukiSU (MediaTek安定版: builtin) [cite: 30, 108, 200]
+          echo "Configuring SukiSU Ultra (builtin)..."
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
-          cd ./KernelSU
-          GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          echo "KSU_GIT_VERSION=$GIT_COMMIT_HASH" >> $GITHUB_ENV
-          
-          # 【修正3】バージョン取得も builtin 側から行う
-          echo "Fetching KSU Version..."
-          for i in {1..3}; do
-            KSU_API_VERSION=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/builtin/kernel/Kbuild" | grep -m1 "KSU_VERSION_API :=" | cut -d "=" -f 2 | tr -d ' ')
-            if [ -n "$KSU_API_VERSION" ]; then break; fi
-            sleep 2
-          done
-          echo "KSU_VER=$KSU_API_VERSION" >> $GITHUB_ENV
-          
-          cd ..
-          
-          # SUSFSパッチ
+          # B. SUSFS (Android 15 GKI) [cite: 35, 117, 209]
           echo "Applying SUSFS..."
-          cp ./fs/susfs.c ./common/fs/susfs.c
-          cp ./include/linux/susfs.h ./common/include/linux/susfs.h
-          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
+          git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
           
-          # 【修正4】HymoFSパッチを Android15_6.6 ブランチに変更 (WiFi死対策)
+          cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
+          cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          cp ./SukiSU_patch/69_hide_stuff.patch ./common/
+          
+          cd common
+          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS Patch Failed!"
+          patch -p1 < 69_hide_stuff.patch || true
+          
+          # C. HymoFS (Android 15対応ブランチを使用)
           if [ "${{ env.ENABLE_HYMO }}" = "true" ]; then
-            echo "Adding HymoFS Patch (Android 15 / Kernel 6.6 Branch)..."
-            # 以前の main ブランチではなく、適合するブランチを指定
+            echo "Adding HymoFS Patch (Android 15 Fix)..."
             wget https://raw.githubusercontent.com/Anatdx/HymoFS/refs/heads/android15_6.6/patch/hymofs_with_susfs.patch
-            patch -p1 -F 3 < hymofs_with_susfs.patch || echo "HymoFS Patch applied with offsets or failed."
+            patch -p1 -F 3 < hymofs_with_susfs.patch || echo "HymoFS Patch Failed!"
             
-            # コンフィグ追加
             echo "CONFIG_HYMOFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           fi
           
-          # configの登録
+          # SUSFS Configs
           echo "CONFIG_KSU_SUSFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
@@ -145,72 +152,59 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
 
-          # その他の修正パッチ
-          cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/hmbird_patch.patch" ./hmbird_patch.patch || true
-          if [ -f "hmbird_patch.patch" ]; then
-             patch -p1 -F 3 < hmbird_patch.patch || echo "HMBIRD Patch already applied or failed."
+      # 5. Sched Patch (完美風馳) 
+      - name: 🔧 Apply Sched Patch
+        if: ${{ env.ENABLE_SCX == 'true' }}
+        run: |
+          cd kernel_workspace/common
+          # MT6991専用ブランチを指定 
+          git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
+          
+          cp ./SCHED_PATCH/fengchi_${{ env.SCHED_FILE }}.patch ./
+          if [[ -f "fengchi_${{ env.SCHED_FILE }}.patch" ]]; then
+             dos2unix "fengchi_${{ env.SCHED_FILE }}.patch"
+             patch -p1 -F 3 < "fengchi_${{ env.SCHED_FILE }}.patch" || echo "Sched Patch Failed"
           fi
 
-      # 5. ビルド実行
+      # 6. ビルド実行
       - name: 🔨 Build Kernel
         run: |
-          # 時間設定
-          if [ "${{ env.KEEP_ORIGINAL_SETTINGS }}" = "true" ]; then
-            export KERNEL_TIME=$(date "+%Y-%m-%d %H:%M:%S")
-          else
-            export KERNEL_TIME=$(date "+%Y%m%d_%H%M")
-          fi
-          echo "KERNEL_TIME=$KERNEL_TIME" >> $GITHUB_ENV
-          
           WORKDIR="$(pwd)"
-          
-          # コンパイラのパス設定
           export PATH="$WORKDIR/kernel_workspace/clang18/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
-          
-          # キャッシュ設定
           export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
           export CCACHE_EXEC=$(which ccache)
           export USE_CCACHE=1
           
-          cd kernel_workspace
+          if [ "${{ env.KEEP_ORIGINAL_SETTINGS }}" = "true" ]; then
+             export KERNEL_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+          else
+             export KERNEL_TIME=$(date "+%Y%m%d_%H%M")
+          fi
           
-          # ディレクトリ構造によっては common に移動
-          if [ -d "common" ]; then cd common; fi
+          cd kernel_workspace/common
           
           echo "Starting Build..."
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
 
-      # 6. AnyKernel3 でパッケージ化
+      # 7. パッケージ化
       - name: 📦 Make AnyKernel3
         run: |
-          # 元のファイルにあったBin内のAK3を使用
-          cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/AnyKernel3.zip" ./AnyKernel3.zip
-          unzip AnyKernel3.zip -d AnyKernel3
+          git clone https://github.com/osm0sis/AnyKernel3.git
           
-          # ビルドされたImageを探す
           if [ -f "kernel_workspace/common/out/arch/arm64/boot/Image" ]; then
              cp "kernel_workspace/common/out/arch/arm64/boot/Image" AnyKernel3/
-          elif [ -f "kernel_workspace/out/arch/arm64/boot/Image" ]; then
-             cp "kernel_workspace/out/arch/arm64/boot/Image" AnyKernel3/
           else
-             # GKI構成の場合のパス
              find kernel_workspace -name Image | head -n 1 | xargs -I {} cp {} AnyKernel3/
           fi
           
           cd AnyKernel3
-          
-          # 【修正5】ZIP名を指定の名前に変更
-          FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}.zip"
-          
+          FINAL_ZIP="AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}_MT6991.zip"
           zip -r "$FINAL_ZIP" *
-          
-          # アップロード用に移動
           mv "$FINAL_ZIP" ../
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
 
-      # 7. アップロード
       - name: 📤 Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
