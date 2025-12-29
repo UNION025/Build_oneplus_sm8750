@@ -10,12 +10,6 @@ on:
           - 'realme_GT7'
           - 'oneplus_ace5_ultra'
         default: 'realme_GT7'
-
-      keep_original_settings:
-        description: "📝 純正のカーネル名と時間を保持する"
-        required: false
-        default: true
-        type: boolean
       
       ENABLE_HYMO:
         description: "📝 HymoFS"
@@ -35,10 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEVICES_NAME: ${{ github.event.inputs.DEVICES_NAME }}
-      KEEP_ORIGINAL_SETTINGS: ${{ github.event.inputs.keep_original_settings }}
       ENABLE_HYMO: ${{ github.event.inputs.ENABLE_HYMO }}
       ENABLE_SCX: ${{ github.event.inputs.ENABLE_SCX }}
-      # 基本設定
+      # Realme GT7 / Ace 5 Ultra 用の定義
       REPO_MANIFEST: "mt6991_v_15.0.2_ace5_ultra"
       SCHED_FILE: "oneplus_ace5_ultra"
       DEVICE_CONFIG: "gki_defconfig"
@@ -48,7 +41,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1. 環境構築 & ソース取得 (高速ZIPダウンロード方式)
+      # 1. 環境構築 & ソース取得 (高速安定版)
       - name: 📥 Setup & Download Source
         run: |
           rm -rf kernel_workspace
@@ -59,9 +52,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2
           
-          echo "📥 Downloading Kernel Source (MT6991)..."
+          echo "📥 Downloading Kernel Source..."
           ZIP_URL="https://github.com/OnePlusOSS/android_kernel_oneplus_mt6991/archive/refs/heads/oneplus/${REPO_MANIFEST}.zip"
-          
           aria2c -s16 -x16 -k1M "$ZIP_URL" -o common.zip
           unzip -q common.zip
           mv android_kernel_oneplus_mt6991-oneplus-${REPO_MANIFEST} common
@@ -81,13 +73,6 @@ jobs:
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
       # 2. ccache設定
-      - name: 🔧 Setup ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache_${{ env.DEVICES_NAME }}
-          key: ccache-${{ env.DEVICES_NAME }}-${{ runner.os }}
-          restore-keys: ccache-${{ env.DEVICES_NAME }}-
-
       - name: 🔧 Init ccache
         run: |
           export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
@@ -106,38 +91,34 @@ jobs:
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
 
-      # 4. KernelSU / SUSFS / HymoFS (MediaTek安定版)
+      # 4. KernelSU / SUSFS / HymoFS
       - name: 🧩 Apply KernelSU & SUSFS & HymoFS
         run: |
           cd kernel_workspace
           
-          # SukiSU (builtin)
-          echo "Configuring SukiSU Ultra (builtin)..."
+          # SukiSU
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
           
           # SUSFS
-          echo "Applying SUSFS..."
           git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
-          
           cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
           cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
           cp ./SukiSU_patch/69_hide_stuff.patch ./common/
           
           cd common
-          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || echo "SUSFS Patch Failed!"
+          patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
           patch -p1 < 69_hide_stuff.patch || true
           
-          # HymoFS (Android 15 Fix)
+          # HymoFS (WiFi Fix)
           if [ "${{ env.ENABLE_HYMO }}" = "true" ]; then
-            echo "Adding HymoFS Patch (Android 15 Fix)..."
             wget https://raw.githubusercontent.com/Anatdx/HymoFS/refs/heads/android15_6.6/patch/hymofs_with_susfs.patch
-            patch -p1 -F 3 < hymofs_with_susfs.patch || echo "HymoFS Patch Failed!"
+            patch -p1 -F 3 < hymofs_with_susfs.patch || true
             echo "CONFIG_HYMOFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           fi
           
-          # SUSFS Configs
+          # Configs
           echo "CONFIG_KSU_SUSFS=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/arm64/configs/${{ env.DEVICE_CONFIG }}
@@ -155,7 +136,6 @@ jobs:
         run: |
           cd kernel_workspace/common
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b "mt6991"
-          
           cp ./SCHED_PATCH/fengchi_${{ env.SCHED_FILE }}.patch ./
           if [[ -f "fengchi_${{ env.SCHED_FILE }}.patch" ]]; then
              dos2unix "fengchi_${{ env.SCHED_FILE }}.patch"
@@ -171,36 +151,29 @@ jobs:
           export CCACHE_DIR="$HOME/.ccache_${{ env.DEVICES_NAME }}"
           export CCACHE_EXEC=$(which ccache)
           export USE_CCACHE=1
-          
-          if [ "${{ env.KEEP_ORIGINAL_SETTINGS }}" = "true" ]; then
-             export KERNEL_TIME=$(date "+%Y-%m-%d %H:%M:%S")
-          else
-             export KERNEL_TIME=$(date "+%Y%m%d_%H%M")
-          fi
+          export KERNEL_TIME=$(date "+%Y-%m-%d %H:%M:%S")
           
           cd kernel_workspace/common
-          
-          echo "Starting Build..."
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error ${{ env.DEVICE_CONFIG }}
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
 
-      # 7. パッケージ化 (修正: リポジトリのmain.binを使用)
-      - name: 📦 Make AnyKernel3
+      # 7. パッケージ化（フォーク元準拠：main.binを使用）
+      - name: 📦 Make AnyKernel3 (via main.bin)
         run: |
-          # 画像で確認された main.bin を使用してパッケージ化を行う
+          # main.bin を実行場所にコピー
           cp "${GITHUB_WORKSPACE}/.github/workflows/Bin/main.bin" ./
           chmod +x main.bin
           
-          # main.bin を実行 (フォーク元と同じ挙動)
+          # main.bin を実行して AnyKernel3 を生成
+          # このバイナリが Image のコピーや anykernel.sh の調整を自動で行います
           ./main.bin "make_anykernel3"
           rm -rf ./main.bin
-          
-          # 生成されたZIPを探して環境変数にセット
-          FINAL_ZIP=$(find AnyKernel3 -name "*.zip" | head -n 1)
-          echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
 
+      # 8. アップロード
       - name: 📤 Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AK3_SukiSU-Ultra_${{ env.DEVICES_NAME }}
-          path: ${{ env.FINAL_ZIP }}
+          name: AK3_Realme_GT7_Final
+          # main.bin は ./AnyKernel3/ フォルダに生成物を吐き出します
+          # ここを指定することで、フォルダの中身がZIPとしてダウンロードされます
+          path: ./AnyKernel3/*
